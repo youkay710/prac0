@@ -1,229 +1,319 @@
-<!doctypehtml><html lang=en><meta charset=UTF-8><meta content="width=device-width,initial-scale=1,user-scalable=no"name=viewport><title>AR Video Messages</title><style>body{margin:0;overflow:hidden;font-family:Arial,sans-serif}canvas{width:100%;height:100vh}#ui{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);display:flex;flex-direction:row;flex-wrap:nowrap;justify-content:center;gap:6px;background:rgba(0,0,0,.7);padding:6px;border-radius:10px;z-index:1000;max-width:90vw;height:auto}button{padding:5px 10px;font-size:11px;background:#f44;color:#fff;border:none;border-radius:5px;cursor:pointer;min-width:50px;max-height:30px;line-height:1;flex-shrink:0}button:hover{background:#c00}button.active{background:#0c0}#ar-button{position:fixed;top:10px;left:50%;transform:translateX(-50%);padding:8px 16px;font-size:12px;background:url(https://threejs.org/examples/textures/uv_grid_opengl.jpg) no-repeat center;background-size:cover;color:red;border:2px solid #fff;border-radius:8px;z-index:1001;text-shadow:1px 1px 2px #000}#ar-button:hover{background:url(https://threejs.org/examples/textures/uv_grid_opengl.jpg) no-repeat center,#c00;background-size:cover}@media (max-width:600px){#ui{padding:4px;gap:4px}button{padding:4px 8px;font-size:10px;min-width:40px;max-height:25px}#ar-button{padding:6px 12px;font-size:11px}}</style><div id=ui><button id=play-pause>Play</button> <button id=mute>Mute</button> <button id=prev>Prev</button> <button id=next>Next</button> <button id=reset>Reset</button></div><script type=module>import * as THREE from './node_modules/three/build/three.module.js';
-    import { ARButton } from './lib/ARButton.js';
-
-    let camera, scene, renderer;
-    let controller, reticle;
-    let hitTestSource = null;
-    let hitTestSourceRequested = false;
-    let cubes = [];
-
-    const messages = [
-        { video: 'video.mp4', image: 'https://threejs.org/examples/textures/uv_grid_opengl.jpg' },
-        { video: 'video2.mp4', image: './bts.jpg' }
-    ];
-    let currentMessageIndex = 0;
-
-    init();
-
-    function init() {
-        scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
-
-        const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-        scene.add(ambient);
-        const directional = new THREE.DirectionalLight(0xffffff, 1);
-        directional.position.set(1, 2, 3);
-        scene.add(directional);
-
-        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.xr.enabled = true;
-        renderer.setAnimationLoop(animate);
-        document.body.appendChild(renderer.domElement);
-
-        const arButton = ARButton.createButton(renderer, {
-            requiredFeatures: ['hit-test'],
-            optionalFeatures: ['dom-overlay'],
-            domOverlay: { root: document.getElementById('ui') }
-        });
-        arButton.id = 'ar-button';
-        document.body.appendChild(arButton);
-
-        reticle = new THREE.Mesh(
-            new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
-            new THREE.MeshBasicMaterial({ color: 0x00ff00 })
-        );
-        reticle.matrixAutoUpdate = false;
-        reticle.visible = false;
-        scene.add(reticle);
-
-        controller = renderer.xr.getController(0);
-        let tapCount = 0;
-        let lastTap = 0;
-        controller.addEventListener('select', () => {
-            const now = Date.now();
-            if (now - lastTap < 300) {
-                tapCount = 0;
-                resetCube();
-            } else if (reticle.visible && tapCount === 0) {
-                tapCount++;
-                addCube();
-            } else if (tapCount === 1) {
-                togglePlayPause();
-                tapCount++;
-            } else if (tapCount === 2) {
-                scaleCube();
-                tapCount = 0;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>AR Video Messages</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
+        canvas { width: 100%; height: 100vh; }
+        #ui {
+            position: fixed;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: row; /* Force horizontal */
+            flex-wrap: nowrap; /* No wrapping */
+            justify-content: center;
+            gap: 6px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 6px;
+            border-radius: 10px;
+            z-index: 1000;
+            max-width: 90vw;
+            height: auto; /* Contain height */
+        }
+        button {
+            padding: 5px 10px;
+            font-size: 11px;
+            background: #ff4444;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            min-width: 50px;
+            max-height: 30px; /* Cap height */
+            line-height: 1; /* Tight text */
+            flex-shrink: 0; /* Prevent squashing */
+        }
+        button:hover { background: #cc0000; }
+        button.active { background: #00cc00; }
+        #ar-button {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            font-size: 12px;
+            background: url('https://threejs.org/examples/textures/uv_grid_opengl.jpg') no-repeat center;
+            background-size: cover;
+            color: red;
+            border: 2px solid #fff;
+            border-radius: 8px;
+            z-index: 1001;
+            text-shadow: 1px 1px 2px #000;
+        }
+        #ar-button:hover {
+            background: url('https://threejs.org/examples/textures/uv_grid_opengl.jpg') no-repeat center, #cc0000;
+            background-size: cover;
+        }
+        @media (max-width: 600px) {
+            #ui {
+                padding: 4px;
+                gap: 4px;
             }
-            lastTap = now;
-        });
-        scene.add(controller);
-
-        const playPauseBtn = document.getElementById('play-pause');
-        const muteBtn = document.getElementById('mute');
-        document.getElementById('reset').addEventListener('click', resetScene);
-        playPauseBtn.addEventListener('click', togglePlayPause);
-        muteBtn.addEventListener('click', () => {
-            const muted = cubes.every(cube => cube.userData.video.muted);
-            cubes.forEach(cube => cube.userData.video.muted = !muted);
-            muteBtn.textContent = muted ? 'Mute' : 'Unmute';
-            console.log('Audio:', muted ? 'Unmuted' : 'Muted');
-        });
-        document.getElementById('prev').addEventListener('click', () => switchMessage(-1));
-        document.getElementById('next').addEventListener('click', () => switchMessage(1));
-
-        window.addEventListener('resize', onWindowResize);
-    }
-
-    function addCube() {
-        const geometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
-        const video = document.createElement('video');
-        video.src = messages[currentMessageIndex].video;
-        video.loop = true;
-        video.muted = false;
-        video.load();
-        const texture = new THREE.VideoTexture(video);
-        const material = new THREE.MeshPhongMaterial({ map: texture });
-        const cube = new THREE.Mesh(geometry, material);
-        reticle.matrix.decompose(cube.position, cube.quaternion, cube.scale);
-        cube.visible = true;
-        cube.userData.video = video;
-        cube.userData.playing = false;
-        cube.userData.defaultTexture = new THREE.TextureLoader().load(messages[currentMessageIndex].image);
-        scene.add(cube);
-        cubes.push(cube);
-    }
-
-    function togglePlayPause() {
-        const lastCube = cubes[cubes.length - 1];
-        if (lastCube) {
-            if (lastCube.userData.playing) {
-                lastCube.userData.video.pause();
-                lastCube.material.map = lastCube.userData.defaultTexture;
-                lastCube.userData.playing = false;
-                document.getElementById('play-pause').textContent = 'Play';
-                console.log('Video paused');
-            } else {
-                lastCube.userData.video.play()
-                    .then(() => {
-                        lastCube.material.map = new THREE.VideoTexture(lastCube.userData.video);
-                        lastCube.material.map.needsUpdate = true;
-                        console.log('Video playing, duration:', lastCube.userData.video.duration);
-                    })
-                    .catch(err => console.error('Play failed:', err));
-                lastCube.userData.playing = true;
-                document.getElementById('play-pause').textContent = 'Pause';
+            button {
+                padding: 4px 8px;
+                font-size: 10px;
+                min-width: 40px;
+                max-height: 25px;
+            }
+            #ar-button {
+                padding: 6px 12px;
+                font-size: 11px;
             }
         }
-    }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <button id="play-pause">Play</button>
+        <button id="mute">Mute</button>
+        <button id="prev">Prev</button>
+        <button id="next">Next</button>
+        <button id="reset">Reset</button>
+    </div>
+    <script type="module">
+        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js';
+        import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/webxr/ARButton.js';
 
-    function switchMessage(direction) {
-        currentMessageIndex = (currentMessageIndex + direction + messages.length) % messages.length;
-        cubes.forEach(cube => {
-            cube.userData.video.src = messages[currentMessageIndex].video;
-            cube.userData.video.load();
-            cube.userData.defaultTexture.image.src = messages[currentMessageIndex].image;
-            cube.userData.defaultTexture.needsUpdate = true;
-            if (cube.userData.playing) {
-                cube.userData.video.play().catch(err => console.error('Play failed:', err));
-                cube.material.map = new THREE.VideoTexture(cube.userData.video);
-            } else {
-                cube.material.map = cube.userData.defaultTexture;
-            }
-            cube.material.map.needsUpdate = true;
-        });
-        console.log('Switched to message:', currentMessageIndex);
-    }
+        let camera, scene, renderer;
+        let controller, reticle;
+        let hitTestSource = null;
+        let hitTestSourceRequested = false;
+        let cubes = [];
 
-    function scaleCube() {
-        const lastCube = cubes[cubes.length - 1];
-        if (lastCube) {
-            lastCube.scale.multiplyScalar(1.5);
-            console.log('Cube scaled:', lastCube.scale);
-        }
-    }
+        const messages = [
+            { video: 'video.mp4', image: 'https://threejs.org/examples/textures/uv_grid_opengl.jpg' },
+            { video: 'video2.mp4', image: './bts.jpg' }
+        ];
+        let currentMessageIndex = 0;
 
-    function resetCube() {
-        const lastCube = cubes[cubes.length - 1];
-        if (lastCube) {
-            lastCube.scale.set(1, 1, 1);
-            lastCube.material.color.set(0xff0000);
-            console.log('Cube reset');
-        }
-    }
+        init();
 
-    function resetScene() {
-        cubes.forEach(cube => {
-            cube.userData.video.pause();
-            scene.remove(cube);
-        });
-        cubes = [];
-        document.getElementById('play-pause').textContent = 'Play';
-        console.log('Scene reset');
-    }
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
-    function onWindowResize() {
-        if (!renderer.xr.isPresenting) {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
+            const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambient);
+            const directional = new THREE.DirectionalLight(0xffffff, 1);
+            directional.position.set(1, 2, 3);
+            scene.add(directional);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            renderer.setAnimationLoop(animate);
+            document.body.appendChild(renderer.domElement);
+
+            const arButton = ARButton.createButton(renderer, {
+                requiredFeatures: ['hit-test'],
+                optionalFeatures: ['dom-overlay'],
+                domOverlay: { root: document.getElementById('ui') }
+            });
+            arButton.id = 'ar-button';
+            document.body.appendChild(arButton);
+
+            reticle = new THREE.Mesh(
+                new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
+                new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+            );
+            reticle.matrixAutoUpdate = false;
+            reticle.visible = false;
+            scene.add(reticle);
+
+            controller = renderer.xr.getController(0);
+            let tapCount = 0;
+            let lastTap = 0;
+            controller.addEventListener('select', () => {
+                const now = Date.now();
+                if (now - lastTap < 300) {
+                    tapCount = 0;
+                    resetCube();
+                } else if (reticle.visible && tapCount === 0) {
+                    tapCount++;
+                    addCube();
+                } else if (tapCount === 1) {
+                    togglePlayPause();
+                    tapCount++;
+                } else if (tapCount === 2) {
+                    scaleCube();
+                    tapCount = 0;
+                }
+                lastTap = now;
+            });
+            scene.add(controller);
+
+            const playPauseBtn = document.getElementById('play-pause');
+            const muteBtn = document.getElementById('mute');
+            document.getElementById('reset').addEventListener('click', resetScene);
+            playPauseBtn.addEventListener('click', togglePlayPause);
+            muteBtn.addEventListener('click', () => {
+                const muted = cubes.every(cube => cube.userData.video.muted);
+                cubes.forEach(cube => cube.userData.video.muted = !muted);
+                muteBtn.textContent = muted ? 'Mute' : 'Unmute';
+                console.log('Audio:', muted ? 'Unmuted' : 'Muted');
+            });
+            document.getElementById('prev').addEventListener('click', () => switchMessage(-1));
+            document.getElementById('next').addEventListener('click', () => switchMessage(1));
+
+            window.addEventListener('resize', onWindowResize);
         }
-    }
 
-    function animate(timestamp, frame) {
-        if (frame) {
-            const referenceSpace = renderer.xr.getReferenceSpace();
-            const session = renderer.xr.getSession();
+        function addCube() {
+            const geometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+            const video = document.createElement('video');
+            video.src = messages[currentMessageIndex].video;
+            video.loop = true;
+            video.muted = false;
+            video.load();
+            const texture = new THREE.VideoTexture(video);
+            const material = new THREE.MeshPhongMaterial({ map: texture });
+            const cube = new THREE.Mesh(geometry, material);
+            reticle.matrix.decompose(cube.position, cube.quaternion, cube.scale);
+            cube.visible = true;
+            cube.userData.video = video;
+            cube.userData.playing = false;
+            cube.userData.defaultTexture = new THREE.TextureLoader().load(messages[currentMessageIndex].image);
+            scene.add(cube);
+            cubes.push(cube);
+        }
 
-            if (hitTestSourceRequested === false) {
-                session.requestReferenceSpace('viewer').then((viewerSpace) => {
-                    session.requestHitTestSource({ space: viewerSpace }).then((source) => {
-                        hitTestSource = source;
-                        console.log('Hit-test source ready:', hitTestSource);
-                    });
-                });
-                session.addEventListener('end', () => {
-                    hitTestSourceRequested = false;
-                    hitTestSource = null;
-                    console.log('AR session ended');
-                });
-                hitTestSourceRequested = true;
-            }
-
-            if (hitTestSource) {
-                const hitTestResults = frame.getHitTestResults(hitTestSource);
-                if (hitTestResults.length) {
-                    const hit = hitTestResults[0];
-                    const pose = hit.getPose(referenceSpace);
-                    if (pose) {
-                        reticle.visible = true;
-                        reticle.matrix.fromArray(pose.transform.matrix);
-                        console.log('Hit detected');
-                    } else {
-                        reticle.visible = false;
-                        console.log('No valid pose');
-                    }
+        function togglePlayPause() {
+            const lastCube = cubes[cubes.length - 1];
+            if (lastCube) {
+                if (lastCube.userData.playing) {
+                    lastCube.userData.video.pause();
+                    lastCube.material.map = lastCube.userData.defaultTexture;
+                    lastCube.userData.playing = false;
+                    document.getElementById('play-pause').textContent = 'Play';
+                    console.log('Video paused');
                 } else {
-                    reticle.visible = false;
-                    console.log('No hits');
+                    lastCube.userData.video.play()
+                        .then(() => {
+                            lastCube.material.map = new THREE.VideoTexture(lastCube.userData.video);
+                            lastCube.material.map.needsUpdate = true;
+                            console.log('Video playing, duration:', lastCube.userData.video.duration);
+                        })
+                        .catch(err => console.error('Play failed:', err));
+                    lastCube.userData.playing = true;
+                    document.getElementById('play-pause').textContent = 'Pause';
                 }
             }
-
-            cubes.forEach(cube => {
-                cube.rotation.x += 0.01;
-                cube.rotation.y += 0.01;
-            });
         }
-        renderer.render(scene, camera);
-    }</script>
+
+        function switchMessage(direction) {
+            currentMessageIndex = (currentMessageIndex + direction + messages.length) % messages.length;
+            cubes.forEach(cube => {
+                cube.userData.video.src = messages[currentMessageIndex].video;
+                cube.userData.video.load();
+                cube.userData.defaultTexture.image.src = messages[currentMessageIndex].image;
+                cube.userData.defaultTexture.needsUpdate = true;
+                if (cube.userData.playing) {
+                    cube.userData.video.play().catch(err => console.error('Play failed:', err));
+                    cube.material.map = new THREE.VideoTexture(cube.userData.video);
+                } else {
+                    cube.material.map = cube.userData.defaultTexture;
+                }
+                cube.material.map.needsUpdate = true;
+            });
+            console.log('Switched to message:', currentMessageIndex);
+        }
+
+        function scaleCube() {
+            const lastCube = cubes[cubes.length - 1];
+            if (lastCube) {
+                lastCube.scale.multiplyScalar(1.5);
+                console.log('Cube scaled:', lastCube.scale);
+            }
+        }
+
+        function resetCube() {
+            const lastCube = cubes[cubes.length - 1];
+            if (lastCube) {
+                lastCube.scale.set(1, 1, 1);
+                lastCube.material.color.set(0xff0000);
+                console.log('Cube reset');
+            }
+        }
+
+        function resetScene() {
+            cubes.forEach(cube => {
+                cube.userData.video.pause();
+                scene.remove(cube);
+            });
+            cubes = [];
+            document.getElementById('play-pause').textContent = 'Play';
+            console.log('Scene reset');
+        }
+
+        function onWindowResize() {
+            if (!renderer.xr.isPresenting) {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+        }
+
+        function animate(timestamp, frame) {
+            if (frame) {
+                const referenceSpace = renderer.xr.getReferenceSpace();
+                const session = renderer.xr.getSession();
+
+                if (hitTestSourceRequested === false) {
+                    session.requestReferenceSpace('viewer').then((viewerSpace) => {
+                        session.requestHitTestSource({ space: viewerSpace }).then((source) => {
+                            hitTestSource = source;
+                            console.log('Hit-test source ready:', hitTestSource);
+                        });
+                    });
+                    session.addEventListener('end', () => {
+                        hitTestSourceRequested = false;
+                        hitTestSource = null;
+                        console.log('AR session ended');
+                    });
+                    hitTestSourceRequested = true;
+                }
+
+                if (hitTestSource) {
+                    const hitTestResults = frame.getHitTestResults(hitTestSource);
+                    if (hitTestResults.length) {
+                        const hit = hitTestResults[0];
+                        const pose = hit.getPose(referenceSpace);
+                        if (pose) {
+                            reticle.visible = true;
+                            reticle.matrix.fromArray(pose.transform.matrix);
+                            console.log('Hit detected');
+                        } else {
+                            reticle.visible = false;
+                            console.log('No valid pose');
+                        }
+                    } else {
+                        reticle.visible = false;
+                        console.log('No hits');
+                    }
+                }
+
+                cubes.forEach(cube => {
+                    cube.rotation.x += 0.01;
+                    cube.rotation.y += 0.01;
+                });
+            }
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
